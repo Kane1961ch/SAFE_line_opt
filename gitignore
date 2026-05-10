@@ -1,0 +1,29 @@
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+.env
+.venv/
+venv/
+
+# Resultados locais (gerados pelo PyCharm — não vão para o repo)
+resultados/
+checkpoints/
+*.pkl
+
+# Dados sensíveis — fazer upload manual via app
+marlim_data_estruturado.xlsx
+tupi_data_estruturado.xlsx
+*_data_estruturado.xlsx
+
+# Gráficos gerados localmente
+*.png
+
+# OS
+.DS_Store
+Thumbs.db
+
+# IDE
+.idea/
+.vscode/
+*.swp

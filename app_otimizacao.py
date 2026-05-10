@@ -12,8 +12,27 @@ import matplotlib
 matplotlib.use('Agg')
 import matplotlib.pyplot as plt
 import streamlit as st
+from PIL import Image as _PILImage
+_PILImage.MAX_IMAGE_PIXELS = 300_000_000   # evita DecompressionBombError
 
 warnings.filterwarnings('ignore')
+
+def safe_show(fig):
+    """
+    Renderiza a figura em PNG com DPI controlado e exibe via st.image.
+    Evita o DecompressionBombError do PIL causado por figuras com patches
+    fora dos limites dos eixos (ex.: typo limits max = 24095 no Excel).
+    """
+    try:
+        buf = io.BytesIO()
+        # bbox_inches=None → usa apenas os limites definidos em ax.set_xlim/ylim
+        fig.savefig(buf, format='png', dpi=80, bbox_inches=None)
+        buf.seek(0)
+        st.image(buf, use_container_width=True)
+    except Exception as e:
+        st.warning(f"Não foi possível renderizar o gráfico: {e}")
+    finally:
+        plt.close(fig)
 
 # ── Configuração da página ─────────────────────────────────────────────────────
 st.set_page_config(
@@ -216,9 +235,9 @@ if executar:
     # Configura GA_CONFIG
     if modo_key == 'DIRETO':
         if cloud_mode:
-            algo.GA_CONFIG = {'water_pop':150,'water_gen':25,
-                              'foam_pop':150, 'foam_gen':15,
-                              'pos_pop':100,  'pos_gen':30}
+            algo.GA_CONFIG = {'water_pop':200,'water_gen':35,
+                              'foam_pop':200, 'foam_gen':20,
+                              'pos_pop':150,  'pos_gen':40}
         else:
             algo.GA_CONFIG = {'water_pop':500,'water_gen':80,
                               'foam_pop':500, 'foam_gen':40,
@@ -378,35 +397,40 @@ tabs = st.tabs(["📊 Resultados", "📐 Diâmetros", "🗺️ Layout", "⬇ Exp
 with tabs[0]:
     if modo_res == 'DIRETO':
         st.subheader("Resumo comparativo de configurações")
-        st.dataframe(summ, use_container_width=True)
+        if summ is not None and not summ.empty:
+            st.dataframe(summ, use_container_width=True)
+        else:
+            st.warning(
+                "O GA não encontrou solução viável nesta execução. "
+                "Tente aumentar o número de seeds ou desative o **Modo Cloud** "
+                "para usar o GA completo (500 ind × 80 ger).")
 
         for wl, r in results.items():
             with st.expander(f"📋 {wl} linhas — consumidores por linha", expanded=len(results)==1):
                 fc = r['post']['df_consumers']
-                # Converte listas para strings para exibição
                 fc_show = fc.copy()
                 for col in ['consumer modules','consumer coamings']:
                     if col in fc_show.columns:
                         fc_show[col] = fc_show[col].apply(lambda x: ', '.join(x) if isinstance(x, list) else x)
                 st.dataframe(fc_show, use_container_width=True)
 
-        # Análise de pressão
         st.subheader("🚒 Análise de pressão — casos críticos")
         try:
-            with io.StringIO() as buf:
-                import contextlib
-                old_stdout = sys.stdout
-                sys.stdout = buf
-                algo.analisar_pressao(
-                    store, modules_areas_base if 'modules_areas_base' in dir() else data['modules_areas'],
-                    data['water_monitors_flow'],
-                    data['modules_df_demand'],
-                    data['water_diameters'])
-                sys.stdout = old_stdout
-                txt = buf.getvalue()
-            st.code(txt)
+            buf_io = io.StringIO()
+            old_stdout = sys.stdout
+            sys.stdout = buf_io
+            algo.analisar_pressao(
+                store, res['results'][list(res['results'].keys())[0]]['ma'] if res['results'] else data['modules_areas'],
+                data['water_monitors_flow'],
+                data['modules_df_demand'],
+                data['water_diameters'])
+            sys.stdout = old_stdout
+            txt = buf_io.getvalue()
+            if txt.strip():
+                st.code(txt)
         except Exception:
-            st.info("Análise de pressão disponível após execução completa.")
+            sys.stdout = old_stdout if 'old_stdout' in dir() else sys.stdout
+            st.info("Análise de pressão disponível após execução bem-sucedida do GA.")
 
     else:  # MANUAL
         st.subheader("Alocação de consumidores")
@@ -422,21 +446,19 @@ with tabs[1]:
 
     if modo_res == 'DIRETO' and results:
         for wl, r in results.items():
-            fc    = r['post']['df_consumers']
-            diam_l= list(fc['nominal diameter (in)'].values)
-            labels= list(fc['lines'].values)
-            mono  = algo.calcular_monotonicidade(diam_l, label=f'{wl} Linhas')
-            fig   = algo.plotar_diametros_linhas(diam_l, labels,
-                        titulo=f'Diâmetros — {wl} Linhas',
-                        nome_arquivo=f'diam_{wl}L', mono_params=mono)
-            st.pyplot(fig, use_container_width=True)
-            plt.close(fig)
-
+            fc     = r['post']['df_consumers']
+            diam_l = list(fc['nominal diameter (in)'].values)
+            labels = list(fc['lines'].values)
+            mono   = algo.calcular_monotonicidade(diam_l, label=f'{wl} Linhas')
+            fig    = algo.plotar_diametros_linhas(diam_l, labels,
+                         titulo=f'Diâmetros — {wl} Linhas',
+                         nome_arquivo=f'diam_{wl}L', mono_params=mono)
+            safe_show(fig)
             col1, col2, col3, col4 = st.columns(4)
-            col1.metric("mono_ratio",   f"{mono['mono_ratio']:.4f}")
-            col2.metric("Quebras",      mono['n_breaks'])
-            col3.metric("Queda total",  f"{mono['total_drop']:.1f}\"")
-            col4.metric("Maior queda",  f"{mono['max_drop']:.1f}\"")
+            col1.metric("mono_ratio",  f"{mono['mono_ratio']:.4f}")
+            col2.metric("Quebras",     mono['n_breaks'])
+            col3.metric("Queda total", f"{mono['total_drop']:.1f}\"")
+            col4.metric("Maior queda", f"{mono['max_drop']:.1f}\"")
             st.divider()
 
     elif modo_res == 'MANUAL':
@@ -445,22 +467,21 @@ with tabs[1]:
         labels = list(df_mc['lines'].values)
         mono   = algo.calcular_monotonicidade(diam_l, label='MANUAL')
         fig    = algo.plotar_diametros_linhas(diam_l, labels,
-                    titulo='Diâmetros — MANUAL',
-                    nome_arquivo='diam_manual', mono_params=mono)
-        st.pyplot(fig, use_container_width=True)
-        plt.close(fig)
-
+                     titulo='Diâmetros — MANUAL',
+                     nome_arquivo='diam_manual', mono_params=mono)
+        safe_show(fig)
         col1, col2, col3, col4 = st.columns(4)
         col1.metric("mono_ratio",  f"{mono['mono_ratio']:.4f}")
         col2.metric("Quebras",     mono['n_breaks'])
         col3.metric("Queda total", f"{mono['total_drop']:.1f}\"")
         col4.metric("Maior queda", f"{mono['max_drop']:.1f}\"")
-
         if mono['n_breaks'] > 0:
             st.warning(
-                f"Quebras detectadas em: {', '.join([f'L{i+1}→L{i+2}' for i in mono['breaks_idx']])}. "
-                "A solução manual tem diâmetros fora de sequência nessas linhas, o que pode indicar "
-                "que a alocação de consumidores gera vazões não-crescentes nesses trechos.")
+                f"Quebras em: {', '.join([f'L{i+1}→L{i+2}' for i in mono['breaks_idx']])}. "
+                "Vazões não-crescentes nessas linhas — revisar alocação de módulos/coamings.")
+
+    else:
+        st.info("Execute o algoritmo para visualizar os diâmetros.")
 
 # ══ TAB 3 — Layout ═══════════════════════════════════════════════════════════
 with tabs[2]:
@@ -468,9 +489,9 @@ with tabs[2]:
     figs_layout = {k: v for k, v in res['figs'].items() if k.startswith('layout')}
     if figs_layout:
         for nome, fig in figs_layout.items():
-            st.pyplot(fig, use_container_width=True)
+            safe_show(fig)
     else:
-        st.info("O gráfico de layout é gerado apenas no modo DIRETO (requer o posicionamento pelo GA).")
+        st.info("O gráfico de layout é gerado apenas no modo DIRETO.")
 
 # ══ TAB 4 — Exportar ═════════════════════════════════════════════════════════
 with tabs[3]:

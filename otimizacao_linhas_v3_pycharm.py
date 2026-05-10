@@ -894,7 +894,7 @@ class GAResultsStore:
                 if k in cfg:
                     row[rk] = round(cfg[k]/1000, 3)
             rows.append(row)
-        return pd.DataFrame(rows).sort_values('Melhor Peso (ton)').reset_index(drop=True)
+        return pd.DataFrame(rows).sort_values('Melhor Peso (ton)').reset_index(drop=True) if rows else pd.DataFrame()
 
 
 class WaterDistribution:
@@ -1500,13 +1500,14 @@ def exportar_excel(store, modules_areas_base, coamings_areas, df_mod, df_com,
 
     dfs['Resumo_Geral'] = store.summary_table()
 
-    if abas == 0:
+    if abas == 0 and dfs.get('Resumo_Geral') is not None and dfs['Resumo_Geral'].empty:
         print('\n⚠️ Nenhuma configuração viável para exportar.')
         return
 
     with pd.ExcelWriter(nome, engine='openpyxl') as writer:
         for sheet_name, df_sheet in dfs.items():
-            df_sheet.to_excel(writer, sheet_name=sheet_name, index=False)
+            if df_sheet is not None and not (hasattr(df_sheet, 'empty') and df_sheet.empty):
+                df_sheet.to_excel(writer, sheet_name=sheet_name, index=False)
 
     print(f'\n✅ Excel exportado: {nome}')
 

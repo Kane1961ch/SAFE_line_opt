@@ -549,5 +549,5 @@ st.caption(
     f"🕐 Execução em {res.get('tempo',0):.1f} s  |  "
     f"Modo: {modo_res}  |  "
     "Otimização de Linhas de Proteção Contra Incêndio — FPSO/Plataforma  |  "
-    "PUC-Rio / ECOA — PETROBRAS"
+    "PUC-Rio / ICA — PETROBRAS"
 )
